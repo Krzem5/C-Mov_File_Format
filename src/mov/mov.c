@@ -102,7 +102,7 @@ uint8_t load_mov(const char* fp,mov_file_t* o){
 	o->m_tm=0;
 	o->fps=0;
 	o->d=0;
-	FILE* f=fopen(fp,"rb");
+	FILE* f=fopen(fp,"rb");// lgtm [cpp/path-injection]
 	if (!f){
 		goto _error;
 	}
