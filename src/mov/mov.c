@@ -41,7 +41,7 @@ typedef struct __BOX_HEADER{
 
 
 
-uint8_t _read_atom(FILE* f,box_header_t* b,uint32_t* sk){
+uint8_t _read_box(FILE* f,box_header_t* b){
 	uint8_t bf[BOX_HEADER_SIZE];
 	if (fread((void*)bf,sizeof(uint8_t),BOX_HEADER_SIZE,f)!=BOX_HEADER_SIZE){
 		return 0;
@@ -50,13 +50,6 @@ uint8_t _read_atom(FILE* f,box_header_t* b,uint32_t* sk){
 	b->t=(((uint32_t)(bf[4]))<<24)|(((uint32_t)(bf[5]))<<16)|(((uint32_t)(bf[6]))<<8)|((uint32_t)(bf[7]));
 	if (b->sz<2){
 		ASSERT(!"Unimplemented");
-	}
-	if (b->t==BOX_HEADER_TYPE(f,r,e,e)){
-		if (sk){
-			(*sk)-=b->sz;
-		}
-		fseek(f,b->sz-BOX_HEADER_SIZE,SEEK_CUR);
-		return _read_atom(f,b,sk);
 	}
 	return 1;
 }
@@ -102,12 +95,16 @@ uint8_t load_mov(const char* fp,mov_file_t* o){
 	o->m_tm=0;
 	o->fps=0;
 	o->d=0;
+	o->tl.dt=NULL;
+	o->tl.l=0;
+	o->_dt.dt=NULL;
+	o->_dt.l=0;
 	FILE* f=fopen(fp,"rb");// lgtm [cpp/path-injection]
 	if (!f){
 		goto _error;
 	}
 	box_header_t b;
-	if (!_read_atom(f,&b,NULL)){
+	if (!_read_box(f,&b)){
 		goto _error;
 	}
 	if (b.t!=BOX_HEADER_TYPE(f,t,y,p)){
@@ -124,13 +121,13 @@ uint8_t load_mov(const char* fp,mov_file_t* o){
 		ASSERT(!"Unimplemented");
 	}
 	while (1){
-		if (!_read_atom(f,&b,NULL)){
+		if (!_read_box(f,&b)){
 			break;
 		}
 		if (b.t==BOX_HEADER_TYPE(m,o,o,v)){
 			uint32_t sz=b.sz-BOX_HEADER_SIZE;
 			while (sz){
-				if (!_read_atom(f,&b,&sz)){
+				if (!_read_box(f,&b)){
 					goto _error;
 				}
 				sz-=b.sz;
@@ -149,7 +146,7 @@ uint8_t load_mov(const char* fp,mov_file_t* o){
 					mov_file_track_t tr={0};
 					uint32_t trak_sz=b.sz-BOX_HEADER_SIZE;
 					while (trak_sz){
-						if (!_read_atom(f,&b,NULL)){
+						if (!_read_box(f,&b)){
 							break;
 						}
 						trak_sz-=b.sz;
@@ -182,7 +179,7 @@ uint8_t load_mov(const char* fp,mov_file_t* o){
 						else if (b.t==BOX_HEADER_TYPE(m,d,i,a)){
 							uint32_t mdia_sz=b.sz-BOX_HEADER_SIZE;
 							while (mdia_sz){
-								if (!_read_atom(f,&b,NULL)){
+								if (!_read_box(f,&b)){
 									break;
 								}
 								mdia_sz-=b.sz;
@@ -205,7 +202,7 @@ uint8_t load_mov(const char* fp,mov_file_t* o){
 								else if (b.t==BOX_HEADER_TYPE(m,i,n,f)){
 									uint32_t minf_sz=b.sz-BOX_HEADER_SIZE;
 									while (minf_sz){
-										if (!_read_atom(f,&b,NULL)){
+										if (!_read_box(f,&b)){
 											break;
 										}
 										minf_sz-=b.sz;
@@ -228,7 +225,7 @@ uint8_t load_mov(const char* fp,mov_file_t* o){
 											}
 										}
 										else if (b.t==BOX_HEADER_TYPE(d,i,n,f)){
-											if (!_read_atom(f,&b,NULL)){
+											if (!_read_box(f,&b)){
 												goto _error;
 											}
 											if (b.t==BOX_HEADER_TYPE(d,r,e,f)){
@@ -258,7 +255,7 @@ uint8_t load_mov(const char* fp,mov_file_t* o){
 										else if (b.t==BOX_HEADER_TYPE(s,t,b,l)){
 											uint32_t stbl_sz=b.sz-BOX_HEADER_SIZE;
 											while (stbl_sz){
-												if (!_read_atom(f,&b,NULL)){
+												if (!_read_box(f,&b)){
 													goto _error;
 												}
 												stbl_sz-=b.sz;
@@ -290,6 +287,16 @@ uint8_t load_mov(const char* fp,mov_file_t* o){
 				}
 			}
 		}
+		else if (b.t==BOX_HEADER_TYPE(m,d,a,t)){
+			o->_dt.l++;
+			o->_dt.dt=realloc(o->_dt.dt,o->_dt.l*sizeof(_mov_file_data_t));
+			(o->_dt.dt+o->_dt.l-1)->off=0;
+			(o->_dt.dt+o->_dt.l-1)->sz=b.sz-BOX_HEADER_SIZE;
+			(o->_dt.dt+o->_dt.l-1)->bf=malloc((b.sz-BOX_HEADER_SIZE)*sizeof(uint8_t));
+			if (fread((void*)((o->_dt.dt+o->_dt.l-1)->bf),sizeof(uint8_t),b.sz-BOX_HEADER_SIZE,f)!=b.sz-BOX_HEADER_SIZE){
+				goto _error;
+			}
+		}
 		else{
 			printf("Warning: Unknown Type %.8"PRIx32" (%c%c%c%c) (%"PRIu32" bytes)\n",b.t,b.t>>24,(b.t>>16)&0xff,(b.t>>8)&0xff,b.t&0xff,b.sz);
 			fseek(f,b.sz-BOX_HEADER_SIZE,SEEK_CUR);
@@ -307,5 +314,36 @@ _error:
 		free(o->v);
 		o->v=NULL;
 	}
+	if (o->tl.dt){
+		free(o->tl.dt);
+		o->tl.dt=NULL;
+	}
+	if (o->_dt.dt){
+		for (uint32_t i=0;i<o->_dt.l;i++){
+			free((o->_dt.dt+i)->bf);
+		}
+		free(o->_dt.dt);
+		o->_dt.dt=NULL;
+	}
 	return 0;
+}
+
+
+
+void free_mov(mov_file_t* f){
+	if (f->v){
+		free(f->v);
+		f->v=NULL;
+	}
+	if (f->tl.dt){
+		free(f->tl.dt);
+		f->tl.dt=NULL;
+	}
+	if (f->_dt.dt){
+		for (uint32_t i=0;i<f->_dt.l;i++){
+			free((f->_dt.dt+i)->bf);
+		}
+		free(f->_dt.dt);
+		f->_dt.dt=NULL;
+	}
 }
