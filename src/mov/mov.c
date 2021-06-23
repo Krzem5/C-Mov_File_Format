@@ -233,8 +233,8 @@ uint8_t load_mov(const char* fp,mov_file_t* o){
 													ASSERT(!"Unimplemented");
 												}
 												fseek(f,3,SEEK_CUR);
-												uint32_t sz=GET_32BIT_BIG_ENDIAN(f);
-												for (uint32_t i=0;i<sz;i++){
+												uint32_t l=GET_32BIT_BIG_ENDIAN(f);
+												for (uint32_t i=0;i<l;i++){
 													uint32_t r_sz=GET_32BIT_BIG_ENDIAN(f);
 													fseek(f,4,SEEK_CUR);
 													if (fgetc(f)!=DREF_REF_VERSION){
